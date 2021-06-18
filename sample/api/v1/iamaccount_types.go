@@ -20,23 +20,50 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+const (
+	IamAccountTypeGoogle     = "google"
+	IamAccountTypeGeneric = "generic"
+)
+
+type IamAccountType string
 
 // IamAccountSpec defines the desired state of IamAccount
 type IamAccountSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Type IamAccountType `json:"type"`
 
-	// Foo is an example field of IamAccount. Edit iamaccount_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// +optional
+	Google *IamAccountSpecGoogle `json:"google,omitempty"`
+}
+
+type IamAccountSpecGoogle struct {
+	Project string `json:"project"`
 }
 
 // IamAccountStatus defines the observed state of IamAccount
 type IamAccountStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions is an array of conditions.
+	// Known .status.conditions.type are: "Ready"
+	//+patchMergeKey=type
+	//+patchStrategy=merge
+	//+listType=map
+	//+listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// GSA the associated Google Service Account email address
+	// +optional
+	GSA string `json:"gsa,omitempty"`
+
+	// KSA the associated Kubernetes Service Account name
+	// +optional
+	KSA string `json:"ksa,omitempty"`
 }
+
+const (
+	ConditionReady string = "Ready"
+)
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status

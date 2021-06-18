@@ -3,5 +3,7 @@ kind: IamAccount
 metadata:
   name: iamaccount-sample
 spec:
-  # Add fields here
-  foo: bar
+  type: generic
+#  type: google
+#  google:
+#    project: sncloud-dev-ewright

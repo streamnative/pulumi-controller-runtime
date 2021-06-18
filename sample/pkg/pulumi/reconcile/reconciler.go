@@ -91,45 +91,66 @@ func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts
 		}
 	}
 
-	// Prepare a deployment target
-	target := r.getTarget(stack, opts.StackConfig, snapshotHandle)
-
 	// Obtain a plugin host
-	host, err := r.createHost(ctx, stack, &target)
+	hostConfig := ctrldeploy.NewHostConfig(opts.StackConfig, r.Decrypter)
+	host, err := r.createHost(ctx, stack, &hostConfig)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "creating Pulumi language host")
 	}
 	defer host.Close()
 
-	// Run the deployment operation
-	var res result.Result
-	var snap *deploy.Snapshot
-	if obj.GetDeletionTimestamp().IsZero() {
-		// update the Pulumi stack
-		snap, res = r.runOp(ctx, project, target, engine.Update, engine.UpdateOptions{Host: host})
-	} else {
-		// destroy the Pulumi stack
-		snap, res = r.runOp(ctx, project, target, engine.Destroy, engine.UpdateOptions{Host: host})
-	}
-	if res != nil && res.Error() != nil {
-		// the update failed due to an internal error, not due to a problem with applying the stack.
-		return reconcile.Result{}, res.Error()
+	// Define a function to run the appropriate operation
+	run := func(dryRun bool) (*deploy.Snapshot, engine.ResourceChanges, result.Result) {
+		t := r.getTarget(stack, opts.StackConfig, snapshotHandle)
+		if obj.GetDeletionTimestamp().IsZero() {
+			// update the Pulumi stack
+			return r.runOp(ctx, project, stack, t, engine.Update, engine.UpdateOptions{Host: host}, dryRun)
+		} else {
+			// destroy the Pulumi stack
+			return r.runOp(ctx, project, stack, t, engine.Destroy, engine.UpdateOptions{Host: host}, dryRun)
+		}
 	}
 
-	// Save the snapshot
-	err = r.Snapshotter.SetSnapshot(ctx, obj, snap, snapshotHandle)
-	if err != nil {
-		// unable to persist the snapshot; fixme.
-		return reconcile.Result{}, errors.Wrapf(err, "writing snapshot data for %q", obj)
+	// Preview for status update
+	_, previewSummary, previewRes := run(true)
+	if previewRes != nil && previewRes.Error() != nil {
+		// the preview failed due to an internal error, not due to a problem with applying the stack.
+		return reconcile.Result{}, previewRes.Error()
 	}
-
-	if res != nil && res.IsBail() {
-		// the update failed due to a problem with applying the stack.  Some progress might have occurred.
-		log.Info("Pulumi up/destroy bailed; will retry")
+	if previewRes != nil && previewRes.IsBail() {
+		// the preview failed due to a problem with applying the stack.
+		log.Info("Pulumi preview bailed; will retry")
 		return reconcile.Result{Requeue: true}, nil
 	}
 
-	log.Info("Pulumi up/destroy succeeded")
+	if !previewSummary.HasChanges() {
+		log.Info("Pulumi up/destroy skipped (no changes)")
+	} else {
+		// Run the deployment operation
+		updateSnap, updateSummary, updateRes := run(false)
+		if updateRes != nil && updateRes.Error() != nil {
+			// the update failed due to an internal error, not due to a problem with applying the stack.
+			return reconcile.Result{}, updateRes.Error()
+		}
+
+		// Save the snapshot
+		err = r.Snapshotter.SetSnapshot(ctx, obj, updateSnap, snapshotHandle)
+		if err != nil {
+			// unable to persist the snapshot; fixme.
+			return reconcile.Result{}, errors.Wrapf(err, "writing snapshot data for %q", obj)
+		}
+
+		if updateRes != nil && updateRes.IsBail() {
+			// the update failed due to a problem with applying the stack.  Some progress might have occurred.
+			log.Info("Pulumi up/destroy bailed; will retry")
+			return reconcile.Result{Requeue: true}, nil
+		}
+
+		log.Info("Pulumi up/destroy succeeded", "summary", updateSummary)
+
+		// We need to update status again; be sure to requeue.
+		reconcileResult.Requeue = true
+	}
 
 	if !obj.GetDeletionTimestamp().IsZero() {
 		if controllerutil.ContainsFinalizer(obj, r.FinalizerName) {
@@ -137,10 +158,11 @@ func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts
 			if err := r.Update(ctx, obj); err != nil {
 				return ctrl.Result{}, err
 			}
+			reconcileResult.Requeue = false
 		}
 	}
 
-	return reconcile.Result{}, nil
+	return reconcileResult, nil
 }
 
 func (r *PulumiReconciler) getProject() workspace.Project {
@@ -167,7 +189,7 @@ func (r *PulumiReconciler) getTarget(stack Stack, cfg config.Map, snapshotHandle
 	}
 }
 
-func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, target *deploy.Target) (plugin.Host, error) {
+func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, cfg plugin.ConfigSource) (plugin.Host, error) {
 
 	loaders := []*ctrldeploy.ProviderLoader{
 		// install inproc providers here
@@ -213,7 +235,7 @@ func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, target *
 		return nil, err
 	}
 	tracingSpan := opentracing.SpanFromContext(ctx)
-	pluginCtx, err := plugin.NewContext(nil, nil, host, target, cwd, nil, false, tracingSpan)
+	pluginCtx, err := plugin.NewContext(nil, nil, host, cfg, cwd, nil, false, tracingSpan)
 	if err != nil {
 		_ = host.Close()
 		return nil, errors.Wrapf(err, "creating Pulumi plugin context")
@@ -226,8 +248,8 @@ func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, target *
 type engineOp func(engine.UpdateInfo, *engine.Context, engine.UpdateOptions, bool) (engine.ResourceChanges, result.Result)
 
 func (r *PulumiReconciler) runOp(
-	callerCtx context.Context, project workspace.Project,
-	target deploy.Target, op engineOp, opts engine.UpdateOptions) (*deploy.Snapshot, result.Result) {
+	callerCtx context.Context, project workspace.Project, stack Stack,
+	target deploy.Target, op engineOp, opts engine.UpdateOptions, dryRun bool) (*deploy.Snapshot, engine.ResourceChanges, result.Result) {
 
 	log := log.FromContext(callerCtx)
 
@@ -249,7 +271,7 @@ func (r *PulumiReconciler) runOp(
 	// Initialize the Pulumi engine
 	events := make(chan engine.Event)  // detailed progress events
 	journal := engine.NewJournal()
-	ctx := &engine.Context{
+	engineCtx := &engine.Context{
 		Cancel:          cancelCtx,
 		Events:          events,
 		SnapshotManager: journal,
@@ -262,11 +284,15 @@ func (r *PulumiReconciler) runOp(
 		for e := range events {
 			firedEvents = append(firedEvents, e)
 			log.Info("engine event", "event", e)
+			err := stack.UpdateStatus(callerCtx, e)
+			if err != nil {
+				log.Error(err, "UpdateStatus")
+			}
 		}
 	}()
 
 	// Run the operation.
-	_, res := op(info, ctx, opts, false)
+	changes, res := op(info, engineCtx, opts, dryRun /*dry-run */)
 
 	// Store the snapshot of the resultant state
 	contract.IgnoreClose(journal)
@@ -275,7 +301,7 @@ func (r *PulumiReconciler) runOp(
 		res = result.WrapIfNonNil(snap.VerifyIntegrity())
 	}
 
-	return snap, res
+	return snap, changes, res
 }
 
 

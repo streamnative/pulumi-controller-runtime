@@ -22,9 +22,10 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-	sdkconfig "github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 	"github.com/streamnative/pulumi-controller/sample/pkg/pulumi/reconcile"
 	"hash/crc32"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -37,7 +38,8 @@ import (
 	pulumigoogleiamv1 "github.com/pulumi/pulumi-google-native/sdk/go/google/iam/v1"
 	pulumicorev1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/core/v1"
 	pulumimetav1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/meta/v1"
-	pulumicontrollerv1 "github.com/streamnative/pulumi-controller/sample/api/v1"
+
+	samplev1 "github.com/streamnative/pulumi-controller/sample/api/v1"
 )
 
 const (
@@ -64,7 +66,7 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	_ = log.FromContext(ctx)
 
-	var iamAccount pulumicontrollerv1.IamAccount
+	var iamAccount samplev1.IamAccount
 	if err := r.Get(ctx, req.NamespacedName, &iamAccount); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -82,7 +84,7 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 type IamAccountContext struct {
 	client.Client
-	Object pulumicontrollerv1.IamAccount
+	Object samplev1.IamAccount
 }
 
 func (r *IamAccountContext) GetObject() client.Object {
@@ -90,28 +92,35 @@ func (r *IamAccountContext) GetObject() client.Object {
 }
 
 func (r *IamAccountContext) Generate(ctx *pulumi.Context) error {
-	conf := sdkconfig.New(ctx, "google-native")
-	project := conf.Require("project")
+	// howto: read stack configuration
+	//conf := sdkconfig.New(ctx, "google-native")
+	//project := conf.Require("project")
 
-	// create a GSA for the IamAccount
-	gsa, err := pulumigoogleiamv1.NewServiceAccount(ctx, "iamaccount", &pulumigoogleiamv1.ServiceAccountArgs{
-		Project:     pulumi.String(project),
-		AccountId:   pulumi.StringPtr(makeServiceAccountId(&r.Object)),
-		DisplayName: pulumi.StringPtr(fmt.Sprintf("IamAccount/%s/%s", r.Object.Namespace, r.Object.Name)),
-		Description: pulumi.StringPtr("Enables resource access for SN Cloud"),
-	})
-	if err != nil {
-		return err
+	var annotations pulumi.StringMap
+	switch r.Object.Spec.Type {
+	case samplev1.IamAccountTypeGoogle:
+		// create a GSA for the IamAccount
+		gsa, err := pulumigoogleiamv1.NewServiceAccount(ctx, "iamaccount", &pulumigoogleiamv1.ServiceAccountArgs{
+			Project:     pulumi.String(r.Object.Spec.Google.Project),
+			AccountId:   pulumi.StringPtr(makeServiceAccountId(&r.Object)),
+			DisplayName: pulumi.StringPtr(fmt.Sprintf("IamAccount/%s/%s", r.Object.Namespace, r.Object.Name)),
+			Description: pulumi.StringPtr("Enables resource access for SN Cloud"),
+		})
+		if err != nil {
+			return err
+		}
+		ctx.Export("gsa", gsa.Email)
+
+		annotations = pulumi.StringMap(map[string]pulumi.StringInput{
+			WorkloadIdentityKsaAnnotation: gsa.Email,
+		})
 	}
-	ctx.Export("gsa", gsa.Email)
 
 	// create a KSA for the IamAccount
 	ksa, err := pulumicorev1.NewServiceAccount(ctx, "iamaccount", &pulumicorev1.ServiceAccountArgs{
 		Metadata: &pulumimetav1.ObjectMetaArgs{
 			Name: pulumi.StringPtr(makeServiceAccountId(&r.Object)),
-			Annotations: pulumi.StringMap(map[string]pulumi.StringInput{
-				WorkloadIdentityKsaAnnotation: gsa.Email,
-			}),
+			Annotations: annotations,
 		},
 	})
 	if err != nil {
@@ -122,7 +131,7 @@ func (r *IamAccountContext) Generate(ctx *pulumi.Context) error {
 	return nil
 }
 
-func makeServiceAccountId(sa *pulumicontrollerv1.IamAccount) string {
+func makeServiceAccountId(sa *samplev1.IamAccount) string {
 	// "Service account ID must be between 6 and 30 characters."
 	// "Service account ID must start with a lower case letter,
 	//  followed by one or more lower case alphanumerical characters that can be separated by hyphens."
@@ -134,14 +143,47 @@ func hash(s string) string {
 }
 
 func (r *IamAccountContext) UpdateStatus(ctx context.Context, event engine.Event) error {
-	// TODO update status based on Pulumi events
+	log := log.FromContext(ctx)
+
+	// update status based on Pulumi events
+	updated := false
+	switch event.Type {
+	case engine.SummaryEvent:
+		summary := event.Payload().(engine.SummaryEventPayload)
+		// toggle readiness based on whether any changes are outstanding
+		if summary.IsPreview && summary.ResourceChanges.HasChanges() {
+			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
+				Type:   samplev1.ConditionReady,
+				Reason: "PendingChanges",
+				Status: metav1.ConditionFalse,
+			})
+			updated = true
+		} else {
+			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
+				Type:   samplev1.ConditionReady,
+				Reason: "OK",
+				Status: metav1.ConditionTrue,
+			})
+			updated = true
+		}
+	}
+
+	if updated {
+		r.Object.Status.ObservedGeneration = r.Object.Generation
+		err := r.Status().Update(ctx, &r.Object)
+		if err != nil {
+			log.Error(err, "failed to update status", "name", r.Object.Name)
+			return err
+		}
+	}
+
 	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *IamAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&pulumicontrollerv1.IamAccount{}).
+		For(&samplev1.IamAccount{}).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		Complete(r)
 }

@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"fmt"
+	"github.com/mitchellh/copystructure"
 	"github.com/pkg/errors"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
@@ -50,7 +51,8 @@ type secretSnapshotHandle struct {
 var _ SnapshotHandle = &secretSnapshotHandle{}
 
 func (s secretSnapshotHandle) GetSnapshot() *deploy.Snapshot {
-	return s.snapshot
+	// note that engine operations (even preview) mutate the snapshot.
+	return CloneSnapshot(s.snapshot)
 }
 
 func (s secretSnapshotHandle) GetObjectGeneration() int64 {
@@ -151,4 +153,10 @@ func makeSecretName(obj client.Object) types.NamespacedName {
 
 func StackName(obj client.Object) tokens.QName {
 	return tokens.QName(obj.GetNamespace() + tokens.QNameDelimiter + obj.GetName())
+}
+
+// CloneSnapshot makes a deep copy of the given snapshot and returns a pointer to the clone.
+func CloneSnapshot(snap *deploy.Snapshot) *deploy.Snapshot {
+	copiedSnap := copystructure.Must(copystructure.Copy(*snap)).(deploy.Snapshot)
+	return &copiedSnap
 }
