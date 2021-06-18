@@ -1,0 +1,24 @@
+# permissions for end users to edit iamaccounts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iamaccount-editor-role
+rules:
+- apiGroups:
+  - pulumi-controller.example.com
+  resources:
+  - iamaccounts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - pulumi-controller.example.com
+  resources:
+  - iamaccounts/status
+  verbs:
+  - get
