@@ -55,7 +55,7 @@ type ReconcileOptions struct {
 type Stack interface {
 	GetObject() client.Object
 	Generate(ctx *pulumi.Context) error
-	UpdateStatus(ctx context.Context, event engine.Event) error
+	UpdateStatus(ctx context.Context, changes StackChanges) error
 }
 
 func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts ReconcileOptions) (reconcileResult reconcile.Result, err error) {
@@ -279,14 +279,14 @@ func (r *PulumiReconciler) runOp(
 	}
 
 	// Begin draining events.
-	var firedEvents []engine.Event
+	stb := builder{}
+	stb.ApplyPlanning(dryRun)
 	go func() {
 		for e := range events {
-			firedEvents = append(firedEvents, e)
-			log.Info("engine event", "event", e)
-			err := stack.UpdateStatus(callerCtx, e)
+			err := stb.ApplyEngineEvent(callerCtx, e)
 			if err != nil {
-				log.Error(err, "UpdateStatus")
+				log.Error(err, "ApplyEngineEvent")
+				// TODO
 			}
 		}
 	}()
@@ -299,6 +299,13 @@ func (r *PulumiReconciler) runOp(
 	snap := journal.Snap(target.Snapshot)
 	if res == nil && snap != nil {
 		res = result.WrapIfNonNil(snap.VerifyIntegrity())
+	}
+
+	err := stack.UpdateStatus(callerCtx, stb.Build())
+	if err != nil {
+		log.Error(err, "UpdateStatus")
+		// fixme: if UpdateStatus fails, we need to recover somehow,
+		// because a subsequent reconcile might not call UpdateStatus again (skipped due to no-change)
 	}
 
 	return snap, changes, res

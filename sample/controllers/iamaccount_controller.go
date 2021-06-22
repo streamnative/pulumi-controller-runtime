@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	"github.com/streamnative/pulumi-controller/sample/pkg/pulumi/reconcile"
@@ -142,39 +141,42 @@ func hash(s string) string {
 	return fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(s)))
 }
 
-func (r *IamAccountContext) UpdateStatus(ctx context.Context, event engine.Event) error {
+func (r *IamAccountContext) UpdateStatus(ctx context.Context, chg reconcile.StackChanges) error {
 	log := log.FromContext(ctx)
 
-	// update status based on Pulumi events
-	updated := false
-	switch event.Type {
-	case engine.SummaryEvent:
-		summary := event.Payload().(engine.SummaryEventPayload)
-		// toggle readiness based on whether any changes are outstanding
-		if summary.IsPreview && summary.ResourceChanges.HasChanges() {
+	if chg.Planning {
+		if chg.HasResourceChanges {
 			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
 				Type:   samplev1.ConditionReady,
 				Reason: "PendingChanges",
 				Status: metav1.ConditionFalse,
 			})
-			updated = true
 		} else {
 			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
 				Type:   samplev1.ConditionReady,
 				Reason: "OK",
 				Status: metav1.ConditionTrue,
 			})
-			updated = true
+		}
+	} else {
+		r.Object.Status.KSA = ""
+		r.Object.Status.GSA = ""
+		switch r.Object.Spec.Type {
+		case samplev1.IamAccountTypeGoogle:
+			if chg.Outputs["gsa"].IsString() {
+				r.Object.Status.GSA = chg.Outputs["gsa"].StringValue()
+			}
+		}
+		if chg.Outputs["ksa"].IsString() {
+			r.Object.Status.KSA = chg.Outputs["ksa"].StringValue()
 		}
 	}
 
-	if updated {
-		r.Object.Status.ObservedGeneration = r.Object.Generation
-		err := r.Status().Update(ctx, &r.Object)
-		if err != nil {
-			log.Error(err, "failed to update status", "name", r.Object.Name)
-			return err
-		}
+	r.Object.Status.ObservedGeneration = r.Object.Generation
+	err := r.Status().Update(ctx, &r.Object)
+	if err != nil {
+		log.Error(err, "failed to update status", "name", r.Object.Name)
+		return err
 	}
 
 	return nil
