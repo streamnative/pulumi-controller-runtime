@@ -2,7 +2,10 @@ package reconcile
 
 import (
 	"context"
-	"github.com/opentracing/opentracing-go"
+	ot "github.com/opentracing/opentracing-go"
+	otlog "github.com/opentracing/opentracing-go/log"
+	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
+
 	"github.com/pkg/errors"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
@@ -17,6 +20,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	ctrldeploy "github.com/streamnative/pulumi-controller/sample/pkg/pulumi/deploy"
+	apitrace "go.opentelemetry.io/otel/trace"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -34,6 +38,8 @@ type PulumiContext struct {
 }
 
 type PulumiReconciler struct {
+	apitrace.Tracer
+	PulumiTracer *otbridge.BridgeTracer
 	client.Client
 	FinalizerName string
 	ControllerName string
@@ -60,6 +66,9 @@ type Stack interface {
 
 func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts ReconcileOptions) (reconcileResult reconcile.Result, err error) {
 	log := log.FromContext(ctx)
+	ctx = r.PulumiTracer.ContextWithBridgeSpan(ctx, apitrace.SpanFromContext(ctx))
+	//otSpan, ctx := ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "ReconcileStack")
+	//defer otSpan.Finish()
 
 	project := r.getProject()
 	obj := stack.GetObject()
@@ -74,8 +83,15 @@ func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts
 	}
 
 	// Load snapshot of object state
-	var snapshotHandle SnapshotHandle
-	snapshotHandle, err = r.Snapshotter.GetSnapshot(ctx, obj)
+	snapshotHandle, err := func() (handle SnapshotHandle, err error) {
+		span, ctx := ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "GetSnapshot")
+		defer span.Finish()
+		handle, err = r.Snapshotter.GetSnapshot(ctx, obj)
+		if err != nil {
+			span.LogFields(otlog.Error(err))
+		}
+		return
+	}()
 	if err != nil {
 		return reconcile.Result{}, errors.Wrapf(err, "reading snapshot data for %q", obj)
 	}
@@ -93,21 +109,41 @@ func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts
 
 	// Obtain a plugin host
 	hostConfig := ctrldeploy.NewHostConfig(opts.StackConfig, r.Decrypter)
-	host, err := r.createHost(ctx, stack, &hostConfig)
+	pluginContext, err := r.createPluginContext(ctx, stack, &hostConfig)
 	if err != nil {
-		return ctrl.Result{}, errors.Wrapf(err, "creating Pulumi language host")
+		return ctrl.Result{}, errors.Wrapf(err, "creating Pulumi plugin context")
 	}
-	defer host.Close()
+	defer pluginContext.Close()
 
 	// Define a function to run the appropriate operation
-	run := func(dryRun bool) (*deploy.Snapshot, engine.ResourceChanges, result.Result) {
+	run := func(dryRun bool) (snap *deploy.Snapshot, changes engine.ResourceChanges, result result.Result) {
+		var runSpan ot.Span
+		var runCtx context.Context
+		if dryRun {
+			runSpan, runCtx = ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "Preview")
+		} else {
+			runSpan, runCtx = ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "Update")
+		}
+		defer func(){
+			fields := logResourceChanges(changes)
+			if result != nil && result.IsBail() {
+				fields = append(fields, otlog.Bool("pulumi.is_bail", result.IsBail()))
+			}
+			if result != nil && !result.IsBail() {
+				fields = append(fields, otlog.Error(result.Error()))
+			}
+			runSpan.LogFields(fields...)
+			runSpan.Finish()
+		}()
+
 		t := r.getTarget(stack, opts.StackConfig, snapshotHandle)
+
 		if obj.GetDeletionTimestamp().IsZero() {
 			// update the Pulumi stack
-			return r.runOp(ctx, project, stack, t, engine.Update, engine.UpdateOptions{Host: host}, dryRun)
+			return r.runOp(runCtx, project, stack, t, engine.Update, engine.UpdateOptions{Host: pluginContext.Host}, dryRun)
 		} else {
 			// destroy the Pulumi stack
-			return r.runOp(ctx, project, stack, t, engine.Destroy, engine.UpdateOptions{Host: host}, dryRun)
+			return r.runOp(runCtx, project, stack, t, engine.Destroy, engine.UpdateOptions{Host: pluginContext.Host}, dryRun)
 		}
 	}
 
@@ -134,7 +170,15 @@ func (r *PulumiReconciler) ReconcileStack(ctx context.Context, stack Stack, opts
 		}
 
 		// Save the snapshot
-		err = r.Snapshotter.SetSnapshot(ctx, obj, updateSnap, snapshotHandle)
+		err = func() (err error) {
+			span, ctx := ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "SetSnapshot")
+			defer span.Finish()
+			err = r.Snapshotter.SetSnapshot(ctx, obj, updateSnap, snapshotHandle)
+			if err != nil {
+				span.LogFields(otlog.Error(err))
+			}
+			return
+		}()
 		if err != nil {
 			// unable to persist the snapshot; fixme.
 			return reconcile.Result{}, errors.Wrapf(err, "writing snapshot data for %q", obj)
@@ -189,7 +233,7 @@ func (r *PulumiReconciler) getTarget(stack Stack, cfg config.Map, snapshotHandle
 	}
 }
 
-func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, cfg plugin.ConfigSource) (plugin.Host, error) {
+func (r *PulumiReconciler) createPluginContext(ctx context.Context, stack Stack, cfg plugin.ConfigSource) (*plugin.Context, error) {
 
 	loaders := []*ctrldeploy.ProviderLoader{
 		// install inproc providers here
@@ -207,20 +251,34 @@ func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, cfg plug
 			cfgSecretKeys[i] = k.String()
 		}
 
+
 		// Run the supplied program using the Pulumi Go SDK
-		ctx, err := pulumi.NewContext(context.Background(), pulumi.RunInfo{
-			Project:          info.Project,
-			Stack:            info.Stack,
-			Config:           cfg,
-			ConfigSecretKeys: cfgSecretKeys,
-			Parallel:         info.Parallel,
-			DryRun:           info.DryRun,
-			MonitorAddr:      info.MonitorAddress,
-		})
-		if err != nil {
-			return errors.Wrapf(err, "creating Pulumi SDK context")
-		}
-		return pulumi.RunWithContext(ctx, stack.Generate)
+
+		err := func() (err error) {
+			span, ctx := ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "Generate")
+			defer span.Finish()
+
+			engineCtx, err := pulumi.NewContext(ctx, pulumi.RunInfo{
+				Project:          info.Project,
+				Stack:            info.Stack,
+				Config:           cfg,
+				ConfigSecretKeys: cfgSecretKeys,
+				Parallel:         info.Parallel,
+				DryRun:           info.DryRun,
+				MonitorAddr:      info.MonitorAddress,
+			})
+			if err != nil {
+				return errors.Wrapf(err, "creating Pulumi SDK context")
+			}
+			defer engineCtx.Close()
+			err = pulumi.RunWithContext(engineCtx, stack.Generate)
+			if err != nil {
+				span.LogFields(otlog.Error(err))
+			}
+			return
+		}()
+
+		return err
 	})
 
 	// Create a plugin host
@@ -234,15 +292,15 @@ func (r *PulumiReconciler) createHost(ctx context.Context, stack Stack, cfg plug
 	if err != nil {
 		return nil, err
 	}
-	tracingSpan := opentracing.SpanFromContext(ctx)
-	pluginCtx, err := plugin.NewContext(nil, nil, host, cfg, cwd, nil, false, tracingSpan)
+	tracingSpan, _ := ot.StartSpanFromContextWithTracer(ctx, r.PulumiTracer, "PluginContext")
+	pluginCtx, err := plugin.NewContext(sink, sink, host, cfg, cwd, nil, false, tracingSpan)
 	if err != nil {
 		_ = host.Close()
 		return nil, errors.Wrapf(err, "creating Pulumi plugin context")
 	}
 	host.SetPluginContext(pluginCtx)
 
-	return host, nil
+	return pluginCtx, nil
 }
 
 type engineOp func(engine.UpdateInfo, *engine.Context, engine.UpdateOptions, bool) (engine.ResourceChanges, result.Result)
@@ -251,6 +309,7 @@ func (r *PulumiReconciler) runOp(
 	callerCtx context.Context, project workspace.Project, stack Stack,
 	target deploy.Target, op engineOp, opts engine.UpdateOptions, dryRun bool) (*deploy.Snapshot, engine.ResourceChanges, result.Result) {
 
+	tracingSpan := ot.SpanFromContext(callerCtx)
 	log := log.FromContext(callerCtx)
 
 	// Create an appropriate update info and context.
@@ -276,6 +335,7 @@ func (r *PulumiReconciler) runOp(
 		Events:          events,
 		SnapshotManager: journal,
 		BackendClient:   r.BackendClient,
+		ParentSpan:      tracingSpan.Context(),
 	}
 
 	// Begin draining events.
@@ -301,7 +361,15 @@ func (r *PulumiReconciler) runOp(
 		res = result.WrapIfNonNil(snap.VerifyIntegrity())
 	}
 
-	err := stack.UpdateStatus(callerCtx, stb.Build())
+	err := func() (err error) {
+		span, ctx := ot.StartSpanFromContextWithTracer(callerCtx, r.PulumiTracer, "UpdateStatus")
+		defer span.Finish()
+		err = stack.UpdateStatus(ctx, stb.Build())
+		if err != nil {
+			span.LogFields(otlog.Error(err))
+		}
+		return
+	}()
 	if err != nil {
 		log.Error(err, "UpdateStatus")
 		// fixme: if UpdateStatus fails, we need to recover somehow,
@@ -328,4 +396,10 @@ func (u *updateInfo) GetProject() *workspace.Project {
 
 func (u *updateInfo) GetTarget() *deploy.Target {
 	return &u.target
+}
+
+func logResourceChanges(changes engine.ResourceChanges) []otlog.Field {
+	return []otlog.Field{
+		otlog.Bool("pulumi.has_changes", changes.HasChanges()),
+	}
 }
