@@ -25,7 +25,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	pulumiconfig "github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
-	"github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/reconcile"
+	pulumireconcile "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/reconcile"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,7 +52,7 @@ const (
 type IamAccountReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	reconcile.PulumiReconciler
+	pulumireconcile.PulumiReconciler
 	otelcontroller.Tracer
 }
 
@@ -71,11 +71,12 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	return r.ReconcileObject(ctx, &iamAccount, reconcile.ReconcileOptions{
+	return r.ReconcileObject(ctx, &iamAccount, pulumireconcile.ReconcileOptions{
 		// prepare a stack configuration for the default resource providers
 		StackConfig: config.Map{
 			config.MustMakeKey("google-native", "project"): config.NewValue(os.Getenv("GCP_PROJECT")),
 		},
+		// Update the status block based on the current state of the Pulumi stack
 		UpdateStatus: r.UpdateStatus,
 	})
 }
@@ -132,7 +133,7 @@ func hash(s string) string {
 	return fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(s)))
 }
 
-func (r *IamAccountReconciler) UpdateStatus(ctx context.Context, o client.Object, chg reconcile.StackChanges) error {
+func (r *IamAccountReconciler) UpdateStatus(ctx context.Context, o client.Object, chg pulumireconcile.StackChanges) error {
 	log := log.FromContext(ctx)
 	obj := o.(*samplev1.IamAccount)
 
@@ -180,10 +181,10 @@ func (r *IamAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Tracer = otelcontroller.NewTracer("iamaccount", otelcontroller.WithKind("IamAccount"))
 
 	// Build a Pulumi-based reconciler for IamAccounts, with resources defined by the Generate function
-	pr, err := reconcile.NewReconcilerManagedBy(mgr).
+	pr, err := pulumireconcile.NewReconcilerManagedBy(mgr).
 		For(&samplev1.IamAccount{}).
 		WithProgram(r.Generate).
-		WithOptions(reconcile.FinalizerName(FinalizerName)).
+		WithOptions(pulumireconcile.FinalizerName(FinalizerName)).
 		Build()
 	if err != nil {
 		return err
