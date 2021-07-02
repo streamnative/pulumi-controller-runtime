@@ -24,7 +24,7 @@ type Tracer struct {
 
 type TracerOption func(*Tracer)
 
-// NewTracer makes a decorated tracer for a reconciler.
+// NewTracer makes a traced reconciler.
 func NewTracer(controllerName string, options ...TracerOption) Tracer {
 	t := Tracer{
 		Tracer: otel.Tracer(instumentationName),

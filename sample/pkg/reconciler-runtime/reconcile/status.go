@@ -1,3 +1,5 @@
+// Copyright (c) 2020 StreamNative, Inc.. All Rights Reserved.
+
 package reconcile
 
 import (
@@ -5,6 +7,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
+	snbackend "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/backend"
 )
 
 const (
@@ -29,30 +32,29 @@ type StackChanges struct {
 	Outputs resource.PropertyMap
 }
 
-type builder struct {
-	changes StackChanges
+var _ snbackend.UpdateEventHandler = &StackChanges{}
+
+func NewStackChanges(dryRun bool) StackChanges {
+	return StackChanges{
+		Planning: dryRun,
+	}
 }
 
-func (b *builder) ApplyPlanning(planning bool) {
-	b.changes.Planning = planning
-}
-
-func (b *builder) ApplyEngineEvent(ctx context.Context, event engine.Event) error {
+// EngineEvent applies an event to the accumulated changes
+func (b *StackChanges) EngineEvent(ctx context.Context, event engine.Event) {
 	switch event.Type {
 	case engine.ResourceOutputsEvent:
 		p := event.Payload().(engine.ResourceOutputsEventPayload)
 		if p.Metadata.Type == pulumiStackType {
-			b.changes.Outputs = p.Metadata.New.Outputs
+			if p.Metadata.New != nil {
+				b.Outputs = p.Metadata.New.Outputs
+			}
 		}
 	case engine.SummaryEvent:
 		p := event.Payload().(engine.SummaryEventPayload)
-		b.changes.HasResourceChanges = p.ResourceChanges.HasChanges()
+		b.HasResourceChanges = p.ResourceChanges.HasChanges()
 	}
-	return nil
 }
 
-func (b *builder) Build() StackChanges {
-	return b.changes
-}
 
 

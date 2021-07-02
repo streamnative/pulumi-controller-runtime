@@ -19,14 +19,16 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
+	"os"
+
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-	"github.com/streamnative/pulumi-controller/sample/pkg/pulumi/reconcile"
-	"hash/crc32"
+	pulumiconfig "github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
+	"github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/reconcile"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -42,7 +44,6 @@ import (
 )
 
 const (
-	ControllerName                = "iamaccount-controller"
 	FinalizerName                 = "iamaccount-controller.pulumi-controller.example.com"
 	WorkloadIdentityKsaAnnotation = "iam.gke.io/gcp-service-account"
 )
@@ -70,39 +71,29 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	c := &IamAccountContext{
-		Client: r.Client,
-		Object: iamAccount,
-	}
-	return r.ReconcileStack(ctx, c, reconcile.ReconcileOptions{
+	return r.ReconcileObject(ctx, &iamAccount, reconcile.ReconcileOptions{
+		// prepare a stack configuration for the default resource providers
 		StackConfig: config.Map{
 			config.MustMakeKey("google-native", "project"): config.NewValue(os.Getenv("GCP_PROJECT")),
 		},
+		UpdateStatus: r.UpdateStatus,
 	})
 }
 
-type IamAccountContext struct {
-	client.Client
-	Object samplev1.IamAccount
-}
-
-func (r *IamAccountContext) GetObject() client.Object {
-	return &r.Object
-}
-
-func (r *IamAccountContext) Generate(ctx *pulumi.Context) error {
-	// howto: read stack configuration
-	//conf := sdkconfig.New(ctx, "google-native")
-	//project := conf.Require("project")
+func (r *IamAccountReconciler) Generate(ctx *pulumi.Context) error {
+	// obtain the object being  reconciled as a configuration parameter.
+	conf := pulumiconfig.New(ctx, "")
+	obj := samplev1.IamAccount{}
+	conf.RequireObject("obj", &obj)
 
 	var annotations pulumi.StringMap
-	switch r.Object.Spec.Type {
+	switch obj.Spec.Type {
 	case samplev1.IamAccountTypeGoogle:
 		// create a GSA for the IamAccount
 		gsa, err := pulumigoogleiamv1.NewServiceAccount(ctx, "iamaccount", &pulumigoogleiamv1.ServiceAccountArgs{
-			Project:     pulumi.String(r.Object.Spec.Google.Project),
-			AccountId:   pulumi.StringPtr(makeServiceAccountId(&r.Object)),
-			DisplayName: pulumi.StringPtr(fmt.Sprintf("IamAccount/%s/%s", r.Object.Namespace, r.Object.Name)),
+			Project:     pulumi.String(obj.Spec.Google.Project),
+			AccountId:   pulumi.StringPtr(makeServiceAccountId(&obj)),
+			DisplayName: pulumi.StringPtr(fmt.Sprintf("IamAccount/%s/%s", obj.Namespace, obj.Name)),
 			Description: pulumi.StringPtr("Enables resource access for SN Cloud"),
 		})
 		if err != nil {
@@ -118,7 +109,7 @@ func (r *IamAccountContext) Generate(ctx *pulumi.Context) error {
 	// create a KSA for the IamAccount
 	ksa, err := pulumicorev1.NewServiceAccount(ctx, "iamaccount", &pulumicorev1.ServiceAccountArgs{
 		Metadata: &pulumimetav1.ObjectMetaArgs{
-			Name: pulumi.StringPtr(makeServiceAccountId(&r.Object)),
+			Name:        pulumi.StringPtr(makeServiceAccountId(&obj)),
 			Annotations: annotations,
 		},
 	})
@@ -141,41 +132,42 @@ func hash(s string) string {
 	return fmt.Sprintf("%08x", crc32.ChecksumIEEE([]byte(s)))
 }
 
-func (r *IamAccountContext) UpdateStatus(ctx context.Context, chg reconcile.StackChanges) error {
+func (r *IamAccountReconciler) UpdateStatus(ctx context.Context, o client.Object, chg reconcile.StackChanges) error {
 	log := log.FromContext(ctx)
+	obj := o.(*samplev1.IamAccount)
 
 	if chg.Planning {
 		if chg.HasResourceChanges {
-			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
+			meta.SetStatusCondition(&obj.Status.Conditions, metav1.Condition{
 				Type:   samplev1.ConditionReady,
 				Reason: "PendingChanges",
 				Status: metav1.ConditionFalse,
 			})
 		} else {
-			meta.SetStatusCondition(&r.Object.Status.Conditions, metav1.Condition{
+			meta.SetStatusCondition(&obj.Status.Conditions, metav1.Condition{
 				Type:   samplev1.ConditionReady,
 				Reason: "OK",
 				Status: metav1.ConditionTrue,
 			})
 		}
 	} else {
-		r.Object.Status.KSA = ""
-		r.Object.Status.GSA = ""
-		switch r.Object.Spec.Type {
+		obj.Status.KSA = ""
+		obj.Status.GSA = ""
+		switch obj.Spec.Type {
 		case samplev1.IamAccountTypeGoogle:
 			if chg.Outputs["gsa"].IsString() {
-				r.Object.Status.GSA = chg.Outputs["gsa"].StringValue()
+				obj.Status.GSA = chg.Outputs["gsa"].StringValue()
 			}
 		}
 		if chg.Outputs["ksa"].IsString() {
-			r.Object.Status.KSA = chg.Outputs["ksa"].StringValue()
+			obj.Status.KSA = chg.Outputs["ksa"].StringValue()
 		}
 	}
 
-	r.Object.Status.ObservedGeneration = r.Object.Generation
-	err := r.Status().Update(ctx, &r.Object)
+	obj.Status.ObservedGeneration = obj.Generation
+	err := r.Status().Update(ctx, obj)
 	if err != nil {
-		log.Error(err, "failed to update status", "name", r.Object.Name)
+		log.Error(err, "failed to update status", "name", obj.Name)
 		return err
 	}
 
@@ -184,6 +176,20 @@ func (r *IamAccountContext) UpdateStatus(ctx context.Context, chg reconcile.Stac
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *IamAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
+
+	r.Tracer = otelcontroller.NewTracer("iamaccount", otelcontroller.WithKind("IamAccount"))
+
+	// Build a Pulumi-based reconciler for IamAccounts, with resources defined by the Generate function
+	pr, err := reconcile.NewReconcilerManagedBy(mgr).
+		For(&samplev1.IamAccount{}).
+		WithProgram(r.Generate).
+		WithOptions(reconcile.FinalizerName(FinalizerName)).
+		Build()
+	if err != nil {
+		return err
+	}
+	r.PulumiReconciler = pr
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&samplev1.IamAccount{}).
 		WithEventFilter(predicate.GenerationChangedPredicate{}).

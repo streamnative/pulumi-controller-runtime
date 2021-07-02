@@ -19,17 +19,15 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/pulumi/pulumi/pkg/v3/secrets/b64"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
-	"github.com/streamnative/pulumi-controller/sample/pkg/pulumi/deploy"
-	"github.com/streamnative/pulumi-controller/sample/pkg/pulumi/reconcile"
+	"net/http"
+	"os"
+
+	ot "github.com/opentracing/opentracing-go"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"k8s.io/client-go/transport"
-	"net/http"
-	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -43,8 +41,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-	otelcontroller "github.com/streamnative/pulumi-controller/sample/pkg/controller-runtime/controller"
-
 	pulumicontrollerexamplecomv1 "github.com/streamnative/pulumi-controller/sample/api/v1"
 	"github.com/streamnative/pulumi-controller/sample/controllers"
 	//+kubebuilder:scaffold:imports
@@ -81,6 +77,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	// Install an OpenTelemetry trace provider.
 	projectID := os.Getenv("GCP_PROJECT")
 	exporter, err := texporter.NewExporter(
 		texporter.WithProjectID(projectID),
@@ -92,14 +89,22 @@ func main() {
 		os.Exit(1)
 	}
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter, sdktrace.WithBlocking(), sdktrace.WithMaxExportBatchSize(1)),
+		sdktrace.WithBatcher(exporter /*sdktrace.WithBlocking(),*/, sdktrace.WithMaxExportBatchSize(1)),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		)
+	)
 	defer tp.ForceFlush(ctx) // flushes any pending spans
 	otel.SetTracerProvider(tp)
 
 	cfg := ctrl.GetConfigOrDie()
-	cfg.Wrap(NewTransport())
+	//cfg.Wrap(NewTransport())
+
+	// Install an OpenTracing "bridge" tracer (because Pulumi uses it)
+	tracer := otel.Tracer("github.com/streamnative/pulumi-controller/sample")
+	bridgeTracer, _ := otbridge.NewTracerPair(tracer)
+	bridgeTracer.SetWarningHandler(func(msg string) {
+		setupLog.Info("warning from OpenTracing bridge: " + msg)
+	})
+	ot.SetGlobalTracer(bridgeTracer)
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
@@ -114,29 +119,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	tracer := otelcontroller.NewTracer("iamaccount-controller", otelcontroller.WithKind("IamAccount"))
-	bridgeTracer, _ := otbridge.NewTracerPair(tracer)
-	bridgeTracer.SetWarningHandler(func(msg string) {
-		setupLog.Info("warning from OpenTracing bridge: " + msg)
-	})
 	if err = (&controllers.IamAccountReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		PulumiReconciler: reconcile.PulumiReconciler{
-			Client:         mgr.GetClient(),
-			FinalizerName:  "iamaccount-controller.pulumi-controller.example.com",
-			ControllerName: "iamaccount",
-			Decrypter:      config.NopDecrypter,
-			Snapshotter:    reconcile.NewSecretSnapshotter(mgr.GetClient(), b64.NewBase64SecretsManager()),
-			BackendClient:  &deploy.BackendClient{},
-			Tracer:         tracer,
-			PulumiTracer:   bridgeTracer,
-		},
-		Tracer: tracer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IamAccount")
 		os.Exit(1)
 	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
