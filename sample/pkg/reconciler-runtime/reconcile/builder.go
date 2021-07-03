@@ -122,11 +122,9 @@ func (b *reconcilerBuilder) Build() (PulumiReconciler, error) {
 	}
 	r.backend = backend
 
-	hostCtx, err := b.createPluginHost(proj, b.programInput.program)
-	if err != nil {
-		return PulumiReconciler{}, err
+	r.createPluginContext = func(ctx context.Context) (*plugin.Context, error) {
+		return b.createPluginHost(ctx, proj, b.programInput.program)
 	}
-	r.hostContext = hostCtx
 
 	return r, nil
 }
@@ -157,15 +155,16 @@ func (b *reconcilerBuilder) createBackend(proj *workspace.Project) (snbackend.Ba
 	return backend, nil
 }
 
-func (b *reconcilerBuilder) createPluginHost(proj *workspace.Project, program pulumi.RunFunc) (*plugin.Context, error) {
+type CreatePluginContextFunc func(ctx context.Context) (*plugin.Context, error)
 
-	// create a top-level context for the plugin interactions
-	ctx := context.Background()
+// createPluginHost creates a plugin host for engine operations.
+// ctx is a top-level context for the plugin interactions.
+func (b *reconcilerBuilder) createPluginHost(ctx context.Context, proj *workspace.Project, program pulumi.RunFunc) (*plugin.Context, error) {
 
 	// Start a tracing span for the lifespan of the plugin context.
 	// This span is the parent for calls to plugins and for callbacks from plugin to host.
-	// The span will finish when the host is closed.
-	tracingSpan, _ := ot.StartSpanFromContext(ctx, "PluginContext")
+	// The span will finish when the plugin context is closed.
+	tracingSpan, _ := ot.StartSpanFromContext(ctx, "pulumi-plugin")
 
 	// Create an embedded Pulumi language runtime to execute the given Pulumi Go SDK program function.
 	// The supplied context becomes the parent for program executions.
@@ -183,7 +182,7 @@ func (b *reconcilerBuilder) createPluginHost(proj *workspace.Project, program pu
 	}
 
 	// Create a plugin context for the plugins loaded by the host.
-	// Note that an additional plugin context will be created by the Pulumi engine.
+	// Note that an separate plugin context ('pulumi-plan') will be created by the Pulumi engine.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err

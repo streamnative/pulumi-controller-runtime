@@ -4,7 +4,6 @@ package backend
 
 import (
 	"context"
-
 	ot "github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	pulumibackend "github.com/pulumi/pulumi/pkg/v3/backend"
@@ -31,7 +30,7 @@ type Backend interface {
 	ParseStackReference(s string) (StackReference, error)
 
 	// LoadStack obtains a stack interface for execution purposes.
-	LoadStack(ctx context.Context, host plugin.Host, project *workspace.Project, obj client.Object) (Stack, error)
+	LoadStack(ctx context.Context, pluginCtx plugin.Context, project *workspace.Project, obj client.Object) (Stack, error)
 }
 
 type defaultBackend struct {
@@ -66,7 +65,7 @@ func (b *defaultBackend) ParseStackReference(s string) (StackReference, error) {
 }
 
 func (b *defaultBackend) LoadStack(ctx context.Context,
-	host plugin.Host,
+	pluginContext plugin.Context,
 	project *workspace.Project, obj client.Object) (Stack, error) {
 
 	ref := newStackReferenceForObject(obj)
@@ -78,7 +77,7 @@ func (b *defaultBackend) LoadStack(ctx context.Context,
 		return nil, err
 	}
 
-	return newStack(b, host, project, ref, obj, snap, handle), nil
+	return newStack(b, pluginContext, project, ref, obj, snap, handle), nil
 }
 
 type defaultBackendContext struct {

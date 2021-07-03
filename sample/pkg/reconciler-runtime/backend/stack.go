@@ -52,7 +52,8 @@ type DestroyOpts struct {
 // kubeStack contains the information needed to run a series of engine operations for a given stack.
 type kubeStack struct {
 	b          *defaultBackend
-	host       plugin.Host
+	ctx        plugin.Context
+	hostCloser io.Closer
 	project    *workspace.Project
 	ref        StackReference
 	obj        client.Object
@@ -64,13 +65,13 @@ type UpdateEventHandler interface {
 	EngineEvent(ctx context.Context, event engine.Event)
 }
 
-func newStack(b *defaultBackend, host plugin.Host,
+func newStack(b *defaultBackend, pluginContext plugin.Context,
 	project *workspace.Project,
 	ref StackReference, obj client.Object,
 	snap *deploy.Snapshot, snapHandle SnapshotHandle) *kubeStack {
 	return &kubeStack{
 		b:          b,
-		host:       host,
+		ctx:       pluginContext,
 		project:    project,
 		ref:        ref,
 		obj:        obj,
@@ -82,7 +83,7 @@ func newStack(b *defaultBackend, host plugin.Host,
 // region Stack
 
 func (s *kubeStack) Close() error {
-	return nil
+	return s.ctx.Close()
 }
 
 func (s *kubeStack) Refresh(ctx context.Context, opts RefreshOpts) (changes engine.ResourceChanges, res result.Result) {
@@ -91,11 +92,12 @@ func (s *kubeStack) Refresh(ctx context.Context, opts RefreshOpts) (changes engi
 		span.LogFields(logUpdateResult(changes, res)...)
 		span.Finish()
 	}()
+	span.LogFields(otlog.Bool("pulumi.dry_run", opts.DryRun))
 	upd, err := s.newUpdate(ctx, opts.Config, opts.EventHandler)
 	if err != nil {
 		return nil, result.FromError(err)
 	}
-	changes, res = s.run(ctx, upd, engine.Refresh, engine.UpdateOptions{Host: s.host}, opts.DryRun)
+	changes, res = s.run(ctx, upd, engine.Refresh, engine.UpdateOptions{Host: wrapHost(s.ctx.Host)}, opts.DryRun)
 	return
 }
 
@@ -105,11 +107,12 @@ func (s *kubeStack) Update(ctx context.Context, opts UpdateOpts) (changes engine
 		span.LogFields(logUpdateResult(changes, res)...)
 		span.Finish()
 	}()
+	span.LogFields(otlog.Bool("pulumi.dry_run", opts.DryRun))
 	upd, err := s.newUpdate(ctx, opts.Config, opts.EventHandler)
 	if err != nil {
 		return nil, result.FromError(err)
 	}
-	changes, res = s.run(ctx, upd, engine.Update, engine.UpdateOptions{Host: s.host}, opts.DryRun)
+	changes, res = s.run(ctx, upd, engine.Update, engine.UpdateOptions{Host: wrapHost(s.ctx.Host)}, opts.DryRun)
 	return
 }
 
@@ -119,11 +122,12 @@ func (s *kubeStack) Destroy(ctx context.Context, opts DestroyOpts) (changes engi
 		span.LogFields(logUpdateResult(changes, res)...)
 		span.Finish()
 	}()
+	span.LogFields(otlog.Bool("pulumi.dry_run", opts.DryRun))
 	upd, err := s.newUpdate(ctx, opts.Config, opts.EventHandler)
 	if err != nil {
 		return nil, result.FromError(err)
 	}
-	changes, res = s.run(ctx, upd, engine.Destroy, engine.UpdateOptions{Host: s.host}, opts.DryRun)
+	changes, res = s.run(ctx, upd, engine.Destroy, engine.UpdateOptions{Host: wrapHost(s.ctx.Host)}, opts.DryRun)
 	return
 }
 
@@ -298,3 +302,17 @@ func (r objectReference) Name() tokens.QName {
 }
 
 // endregion
+
+func wrapHost(host plugin.Host) plugin.Host {
+	return &wrappedHost{
+		Host: host,
+	}
+}
+
+type wrappedHost struct {
+	plugin.Host
+}
+
+func (h *wrappedHost) Close() error {
+	return nil
+}

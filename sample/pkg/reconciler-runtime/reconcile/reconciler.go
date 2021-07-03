@@ -4,6 +4,7 @@ package reconcile
 
 import (
 	"context"
+	"github.com/pkg/errors"
 
 	ot "github.com/opentracing/opentracing-go"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
@@ -13,7 +14,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	snbackend "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/backend"
-	snplugin "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/plugin"
 	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
 	apitrace "go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/util/json"
@@ -41,10 +41,11 @@ type PulumiReconciler struct {
 	apitrace.Tracer
 	client.Client
 	FinalizerName string
+	createPluginContext CreatePluginContextFunc  // obtains a plugin host for engine operations
 
 	// Pulumi options
 	backend     snbackend.Backend // the backend for stack persistence
-	hostContext *plugin.Context   // the plugin host context for engine operations
+	hostContext plugin.Context   // the plugin host context for engine operations
 	proj        *workspace.Project
 }
 
@@ -167,8 +168,13 @@ func (r *PulumiReconciler) ReconcileObject(ctx context.Context, obj client.Objec
 }
 
 func (r *PulumiReconciler) getOrCreateStack(ctx context.Context, obj client.Object) (stack snbackend.Stack, err error) {
-	h := snplugin.NewPooledHost(r.hostContext.Host)
-	stack, err = r.backend.LoadStack(ctx, h, r.proj, obj)
+	hostCtx, err := r.createPluginContext(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "unable to crate a Pulumi plugin context")
+	}
+	r.hostContext = *hostCtx
+
+	stack, err = r.backend.LoadStack(ctx, r.hostContext, r.proj, obj)
 	return
 }
 
