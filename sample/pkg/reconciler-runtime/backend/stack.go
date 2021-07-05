@@ -5,6 +5,7 @@ package backend
 import (
 	"context"
 	"io"
+	"sync"
 
 	ot "github.com/opentracing/opentracing-go"
 	otlog "github.com/opentracing/opentracing-go/log"
@@ -53,12 +54,12 @@ type DestroyOpts struct {
 type kubeStack struct {
 	b          *defaultBackend
 	ctx        plugin.Context
-	hostCloser io.Closer
 	project    *workspace.Project
 	ref        StackReference
 	obj        client.Object
 	snap       *deploy.Snapshot
 	snapHandle SnapshotHandle
+	m          sync.Mutex
 }
 
 type UpdateEventHandler interface {
@@ -83,6 +84,8 @@ func newStack(b *defaultBackend, pluginContext plugin.Context,
 // region Stack
 
 func (s *kubeStack) Close() error {
+	s.m.Lock()
+	defer s.m.Unlock()
 	return s.ctx.Close()
 }
 
@@ -184,11 +187,15 @@ func (s *kubeStack) getTarget(cfg config.Map) (*deploy.Target, error) {
 	if cfg == nil {
 		cfg = config.Map{}
 	}
+	s.m.Lock()
+	defer s.m.Unlock()
+	snap := s.snap
+
 	return &deploy.Target{
 		Name:      s.ref.Name(),
 		Config:    cfg,
 		Decrypter: dec,
-		Snapshot:  s.snap,
+		Snapshot:  snap,
 	}, nil
 }
 
@@ -254,6 +261,8 @@ func (u *update) Save(snap *deploy.Snapshot) error {
 	}
 
 	// retain the snapshot as the basis for any subsequent operation
+	u.stack.m.Lock()
+	defer u.stack.m.Unlock()
 	u.stack.snap = snap
 	u.stack.snapHandle = handle
 	return nil
