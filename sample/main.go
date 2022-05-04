@@ -76,24 +76,7 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	// Install an OpenTelemetry trace provider.
-	projectID := os.Getenv("GCP_PROJECT")
-	exporter, err := texporter.NewExporter(
-		texporter.WithProjectID(projectID),
-		texporter.WithOnError(func(err error) {
-			setupLog.Error(err, "unable to export to Google Trace")
-		}))
-	if err != nil {
-		setupLog.Error(err, "unable to start trace exporter")
-		os.Exit(1)
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter /*sdktrace.WithBlocking(),*/, sdktrace.WithMaxExportBatchSize(1)),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	)
-	defer tp.ForceFlush(ctx) // flushes any pending spans
-	otel.SetTracerProvider(tp)
+	installTracing(ctx)
 
 	cfg := ctrl.GetConfigOrDie()
 	//cfg.Wrap(NewTransport())
@@ -142,6 +125,28 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
+	}
+}
+
+func installTracing(ctx context.Context) {
+	// Install an OpenTelemetry trace provider.
+	projectID := os.Getenv("GCP_PROJECT")
+	if projectID != "" {
+		exporter, err := texporter.NewExporter(
+			texporter.WithProjectID(projectID),
+			texporter.WithOnError(func(err error) {
+				setupLog.Error(err, "unable to export to Google Trace")
+			}))
+		if err != nil {
+			setupLog.Error(err, "unable to start trace exporter")
+			os.Exit(1)
+		}
+		tp := sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(exporter /*sdktrace.WithBlocking(),*/, sdktrace.WithMaxExportBatchSize(1)),
+			sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		)
+		defer tp.ForceFlush(ctx) // flushes any pending spans
+		otel.SetTracerProvider(tp)
 	}
 }
 

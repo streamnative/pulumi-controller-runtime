@@ -64,8 +64,6 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	ctx, _ = r.NewReconcileContext(ctx, req)
 	defer r.EndReconcile(ctx, &result, &err)
 
-	_ = log.FromContext(ctx)
-
 	var iamAccount samplev1.IamAccount
 	if err := r.Get(ctx, req.NamespacedName, &iamAccount); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -81,7 +79,7 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	})
 }
 
-func (r *IamAccountReconciler) Generate(ctx *pulumi.Context) error {
+func (r *IamAccountReconciler) MakeResources(ctx *pulumi.Context) error {
 	// obtain the object being  reconciled as a configuration parameter.
 	conf := pulumiconfig.New(ctx, "")
 	obj := samplev1.IamAccount{}
@@ -111,6 +109,7 @@ func (r *IamAccountReconciler) Generate(ctx *pulumi.Context) error {
 	ksa, err := pulumicorev1.NewServiceAccount(ctx, "iamaccount", &pulumicorev1.ServiceAccountArgs{
 		Metadata: &pulumimetav1.ObjectMetaArgs{
 			Name:        pulumi.StringPtr(makeServiceAccountId(&obj)),
+			Namespace:   pulumi.StringPtr(obj.Namespace),
 			Annotations: annotations,
 		},
 	})
@@ -180,10 +179,10 @@ func (r *IamAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	r.Tracer = otelcontroller.NewTracer("iamaccount", otelcontroller.WithKind("IamAccount"))
 
-	// Build a Pulumi-based reconciler for IamAccounts, with resources defined by the Generate function
+	// Build a Pulumi-based reconciler for IamAccounts, with resources defined by the MakeResources function
 	pr, err := pulumireconcile.NewReconcilerManagedBy(mgr).
 		For(&samplev1.IamAccount{}).
-		WithProgram(r.Generate).
+		WithProgram(r.MakeResources).
 		WithOptions(pulumireconcile.FinalizerName(FinalizerName)).
 		Build()
 	if err != nil {

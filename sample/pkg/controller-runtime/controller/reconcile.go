@@ -13,7 +13,7 @@ import (
 const (
 	// requestKey is the context key for the reconciliation request data
 	requestKey         = iota
-	instumentationName = "github.com/streamnative/kube-instrumentation/otelcontroller/controller"
+	instumentationName = "github.com/streamnative/pulumi-controller/pkg/controller"
 )
 
 type Tracer struct {

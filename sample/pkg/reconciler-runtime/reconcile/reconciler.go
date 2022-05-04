@@ -40,12 +40,12 @@ type Program interface {
 type PulumiReconciler struct {
 	apitrace.Tracer
 	client.Client
-	FinalizerName string
-	createPluginContext CreatePluginContextFunc  // obtains a plugin host for engine operations
+	FinalizerName       string
+	createPluginContext CreatePluginContextFunc // obtains a plugin host for engine operations
 
 	// Pulumi options
 	backend     snbackend.Backend // the backend for stack persistence
-	hostContext plugin.Context   // the plugin host context for engine operations
+	hostContext plugin.Context    // the plugin host context for engine operations
 	proj        *workspace.Project
 }
 
