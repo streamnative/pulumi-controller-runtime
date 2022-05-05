@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-	pulumicontrollerexamplecomv1 "github.com/streamnative/pulumi-controller-runtime/sample/api/v1"
+	samplev1 "github.com/streamnative/pulumi-controller-runtime/sample/api/v1"
 	"github.com/streamnative/pulumi-controller-runtime/sample/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -54,7 +54,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(pulumicontrollerexamplecomv1.AddToScheme(scheme))
+	utilruntime.Must(samplev1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
