@@ -1,0 +1,9 @@
+apiVersion: pulumi-controller.example.com/v1
+kind: IamAccount
+metadata:
+  name: iamaccount-sample
+spec:
+  type: generic
+#  type: google
+#  google:
+#    project: GOOGLE_PROJECT_ID

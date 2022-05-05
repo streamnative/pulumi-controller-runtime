@@ -1,0 +1,16 @@
+domain: example.com
+layout:
+- go.kubebuilder.io/v3
+projectName: sample
+repo: github.com/streamnative/pulumi-controller/sample
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: example.com
+  group: pulumi-controller.example.com
+  kind: IamAccount
+  path: github.com/streamnative/pulumi-controller/sample/api/v1
+  version: v1
+version: "3"

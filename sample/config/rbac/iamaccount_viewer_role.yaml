@@ -1,0 +1,20 @@
+# permissions for end users to view iamaccounts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iamaccount-viewer-role
+rules:
+- apiGroups:
+  - pulumi-controller.example.com
+  resources:
+  - iamaccounts
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - pulumi-controller.example.com
+  resources:
+  - iamaccounts/status
+  verbs:
+  - get
