@@ -1,5 +1,5 @@
 /*
-Copyright 2021.
+Copyright 2022.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
-	"os"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -63,11 +62,14 @@ func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// prepare a stack configuration for the default resource providers
+	stackConfig := config.Map{}
+	if iamAccount.Spec.Type == samplev1.IamAccountTypeGoogle {
+		stackConfig[config.MustMakeKey("google-native", "project")] = config.NewValue(iamAccount.Spec.Google.Project)
+	}
+
 	return r.ReconcileObject(ctx, &iamAccount, pulumireconcile.ReconcileOptions{
-		// prepare a stack configuration for the default resource providers
-		StackConfig: config.Map{
-			config.MustMakeKey("google-native", "project"): config.NewValue(os.Getenv("GCP_PROJECT")),
-		},
+		StackConfig: stackConfig,
 		// Update the status block based on the current state of the Pulumi stack
 		UpdateStatus: r.UpdateStatus,
 	})

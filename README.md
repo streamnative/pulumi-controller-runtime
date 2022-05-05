@@ -5,6 +5,8 @@ This library is designed to work with any Kubernetes controller that is based on
 the [kubernetes-sigs/controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) library.
 Use the [Kubebuilder](https://book.kubebuilder.io/) tool to scaffold an ordinary Kubernetes controller.
 
+See the sample controller in `sample/`.
+
 ## Implement a Custom Resource
 You'll use this library to implement a reconciler for your custom resource.   A reconciler typically provisions
 resources based on a resource specification, and that specification will be defined using the Pulumi Go SDK, as a 
@@ -49,12 +51,37 @@ The library implements object finalization automatically.  When the custom objec
 destroys the current resources.
 
 _This functionality may change based on feedback.  One thought is to not handle finalization automatically, in favor of
-having the reconciler call `UpObject` or `DestroyObject` instead of `ReconcileObject`.  This would be to improve
+having the reconciler call `Up` or `Destroy` instead of `ReconcileObject`.  This would be to improve
 flexibility._
 
 ### Resource Graph
 Your reconciler uses the Pulumi Go SDK to define a resource graph for the custom object.  The library
 provides your reconciler with a context object for this purpose.
+
+For example, here's an implementation of `ReconcileObject` that simply creates a Kubernetes Service Account (KSA)
+using the [Pulumi Kubernetes Provider](https://www.pulumi.com/registry/packages/kubernetes/#pulumi-kubernetes-provider).
+
+```go
+func (r *IamAccountReconciler) MakeResources(ctx *pulumi.Context) error {
+    // obtain the object being reconciled as a configuration parameter.
+    conf := pulumiconfig.New(ctx, "")
+    obj := samplev1.IamAccount{}
+    conf.RequireObject("obj", &obj)
+    
+    // make a KSA for the IamAccount object
+    ksa, err := pulumicorev1.NewServiceAccount(ctx, "iamaccount", &pulumicorev1.ServiceAccountArgs{
+        Metadata: &pulumimetav1.ObjectMetaArgs{
+            Name:        pulumi.StringPtr(makeServiceAccountId(&obj)),
+            Namespace:   pulumi.StringPtr(obj.Namespace),
+        },
+    })
+    if err != nil {
+        return err
+    }
+    ctx.Export("ksa", ksa.Metadata.Name())
+    return nil
+}
+```
 
 Use configuration values, such as the custom object itself or selected values from it, to parameterize the resource graph.
 

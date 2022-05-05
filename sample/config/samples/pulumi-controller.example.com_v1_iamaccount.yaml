@@ -3,7 +3,7 @@ kind: IamAccount
 metadata:
   name: iamaccount-sample
 spec:
-#  type: generic
-  type: google
-  google:
-    project: sncloud-dev-ewright
+  type: generic
+#  type: google
+#  google:
+#    project: GOOGLE_PROJECT_ID

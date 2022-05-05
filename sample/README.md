@@ -7,3 +7,13 @@ into your Kubernetes cluster before starting the controller.
 ```shell
 kubectl apply -f config/crd/bases/
 ```
+
+### Start the Manager
+_Be sure to set your kubectl context to the desired cluster before running the manager._
+
+Create a Run Configuration to run the manager in `sample/main.go`.
+
+### Apply a Sample Object
+See the sample object in `sample/config/samples/pulumi-controller.example.com_v1_iamaccount.yaml`.
+
+Observe that a KSA is created and that the object's condition turns to `Ready`.
