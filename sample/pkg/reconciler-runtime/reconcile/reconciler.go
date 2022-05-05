@@ -14,8 +14,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	snbackend "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/backend"
-	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
-	apitrace "go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/util/json"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +36,6 @@ type Program interface {
 
 // PulumiReconciler is a reconciler for a Kubernetes object, backed by a Pulumi stack of resources.
 type PulumiReconciler struct {
-	apitrace.Tracer
 	client.Client
 	FinalizerName       string
 	createPluginContext CreatePluginContextFunc // obtains a plugin host for engine operations
@@ -60,7 +57,6 @@ type UpdateStatusFunc func(ctx context.Context, obj_ client.Object, chg StackCha
 
 func (r *PulumiReconciler) ReconcileObject(ctx context.Context, obj client.Object, opts ReconcileOptions) (reconcileResult reconcile.Result, err error) {
 	log := log.FromContext(ctx)
-	ctx = WithOpenTracingContext(ctx)
 
 	if obj.GetDeletionTimestamp().IsZero() {
 		if !controllerutil.ContainsFinalizer(obj, r.FinalizerName) {
@@ -176,14 +172,4 @@ func (r *PulumiReconciler) getOrCreateStack(ctx context.Context, obj client.Obje
 
 	stack, err = r.backend.LoadStack(ctx, r.hostContext, r.proj, obj)
 	return
-}
-
-// WithOpenTracingContext converts an OpenTelemetry (OTEL) context into an OpenTracing (OT) context.
-// This allows an OTEL span to serve as the parent of an OT span.
-func WithOpenTracingContext(ctx context.Context) context.Context {
-	t, ok := ot.GlobalTracer().(*otbridge.BridgeTracer)
-	if !ok {
-		return ctx
-	}
-	return t.ContextWithBridgeSpan(ctx, apitrace.SpanFromContext(ctx))
 }

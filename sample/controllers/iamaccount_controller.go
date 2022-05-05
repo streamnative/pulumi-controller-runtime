@@ -34,8 +34,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	otelcontroller "github.com/streamnative/pulumi-controller-runtime/sample/pkg/controller-runtime/controller"
-
 	pulumigoogleiamv1 "github.com/pulumi/pulumi-google-native/sdk/go/google/iam/v1"
 	pulumicorev1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/core/v1"
 	pulumimetav1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/meta/v1"
@@ -53,7 +51,6 @@ type IamAccountReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	pulumireconcile.PulumiReconciler
-	otelcontroller.Tracer
 }
 
 //+kubebuilder:rbac:groups=pulumi-controller.example.com,resources=iamaccounts,verbs=get;list;watch;create;update;patch;delete
@@ -61,9 +58,6 @@ type IamAccountReconciler struct {
 //+kubebuilder:rbac:groups=pulumi-controller.example.com,resources=iamaccounts/finalizers,verbs=update
 
 func (r *IamAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, err error) {
-	ctx, _ = r.NewReconcileContext(ctx, req)
-	defer r.EndReconcile(ctx, &result, &err)
-
 	var iamAccount samplev1.IamAccount
 	if err := r.Get(ctx, req.NamespacedName, &iamAccount); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -176,8 +170,6 @@ func (r *IamAccountReconciler) UpdateStatus(ctx context.Context, o client.Object
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *IamAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
-
-	r.Tracer = otelcontroller.NewTracer("iamaccount", otelcontroller.WithKind("IamAccount"))
 
 	// Build a Pulumi-based reconciler for IamAccounts, with resources defined by the MakeResources function
 	pr, err := pulumireconcile.NewReconcilerManagedBy(mgr).

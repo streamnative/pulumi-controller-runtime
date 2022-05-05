@@ -18,7 +18,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	snbackend "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/backend"
 	snplugin "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/plugin"
-	apitrace "go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -48,7 +47,6 @@ type ProgramOption func(*ProgramInput)
 
 type OptsInput struct {
 	finalizerName string
-	tracer        apitrace.Tracer
 }
 
 type Option func(input *OptsInput)
@@ -97,15 +95,8 @@ func FinalizerName(name string) Option {
 	}
 }
 
-func Tracer(tracer apitrace.Tracer) Option {
-	return func(i *OptsInput) {
-		i.tracer = tracer
-	}
-}
-
 func (b *reconcilerBuilder) Build() (PulumiReconciler, error) {
 	r := PulumiReconciler{
-		Tracer:        b.optsInput.tracer,
 		Client:        b.mgr.GetClient(),
 		FinalizerName: b.optsInput.finalizerName,
 	}

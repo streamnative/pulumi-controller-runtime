@@ -4,9 +4,7 @@ go 1.16
 
 require (
 	cloud.google.com/go v0.84.0 // indirect
-	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v0.20.1
 	github.com/blang/semver v3.5.1+incompatible
-	github.com/gofrs/uuid v3.3.0+incompatible
 	github.com/golang/protobuf v1.5.2
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/mitchellh/copystructure v1.0.0
@@ -18,13 +16,6 @@ require (
 	github.com/pulumi/pulumi-kubernetes/sdk/v3 v3.4.0
 	github.com/pulumi/pulumi/pkg/v3 v3.4.0
 	github.com/pulumi/pulumi/sdk/v3 v3.4.0
-	github.com/streamnative/kube-instrumentation v0.1.2
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.20.0
-	go.opentelemetry.io/otel v1.0.0-RC1
-	go.opentelemetry.io/otel/bridge/opentracing v0.21.0
-	go.opentelemetry.io/otel/internal/metric v0.21.0 // indirect
-	go.opentelemetry.io/otel/sdk v0.20.0
-	go.opentelemetry.io/otel/trace v1.0.0-RC1
 	golang.org/x/net v0.0.0-20210614182718-04defd469f4e
 	golang.org/x/oauth2 v0.0.0-20210622190553-bce0382f6c22 // indirect
 	golang.org/x/sys v0.0.0-20210616094352-59db8d763f22 // indirect

@@ -17,17 +17,8 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
-	"net/http"
 	"os"
-
-	ot "github.com/opentracing/opentracing-go"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
-	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"k8s.io/client-go/transport"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,7 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	samplev1 "github.com/streamnative/pulumi-controller-runtime/sample/api/v1"
 	"github.com/streamnative/pulumi-controller-runtime/sample/controllers"
 	//+kubebuilder:scaffold:imports
@@ -59,8 +49,6 @@ func init() {
 }
 
 func main() {
-	ctx := context.Background()
-
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
@@ -76,18 +64,8 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	installTracing(ctx)
 
 	cfg := ctrl.GetConfigOrDie()
-	//cfg.Wrap(NewTransport())
-
-	// Install an OpenTracing "bridge" tracer (because Pulumi uses it)
-	tracer := otel.Tracer("github.com/streamnative/pulumi-controller-runtime/sample")
-	bridgeTracer, _ := otbridge.NewTracerPair(tracer)
-	bridgeTracer.SetWarningHandler(func(msg string) {
-		setupLog.Info("warning from OpenTracing bridge: " + msg)
-	})
-	ot.SetGlobalTracer(bridgeTracer)
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
@@ -125,33 +103,5 @@ func main() {
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
-	}
-}
-
-func installTracing(ctx context.Context) {
-	// Install an OpenTelemetry trace provider.
-	projectID := os.Getenv("GCP_PROJECT")
-	if projectID != "" {
-		exporter, err := texporter.NewExporter(
-			texporter.WithProjectID(projectID),
-			texporter.WithOnError(func(err error) {
-				setupLog.Error(err, "unable to export to Google Trace")
-			}))
-		if err != nil {
-			setupLog.Error(err, "unable to start trace exporter")
-			os.Exit(1)
-		}
-		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(exporter /*sdktrace.WithBlocking(),*/, sdktrace.WithMaxExportBatchSize(1)),
-			sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		)
-		defer tp.ForceFlush(ctx) // flushes any pending spans
-		otel.SetTracerProvider(tp)
-	}
-}
-
-func NewTransport() transport.WrapperFunc {
-	return func(rt http.RoundTripper) http.RoundTripper {
-		return otelhttp.NewTransport(rt, otelhttp.WithTracerProvider(otel.GetTracerProvider()))
 	}
 }
