@@ -1,5 +1,23 @@
 _This project is in an alpha stage, not suitable for production usage.  Expect breaking changes._
 
+# Purpose
+
+Contollers/Operators frequently follow this pattern:
+
+1. They have an API extension (ex. CRD) that declaratively describes what one would like deployed
+2. The controller/operator watches for creations and updates (ex. of the CRD)
+3. A kubernetes object (ex CR) is created or updated
+4. The operator responds to the change and works forward to get the cluster to the neccessary final state (ex creating a statefulset,
+updating a service account, ectera)
+
+The last step is where the substance of many operators reside; however, the code is often boiletplate and boring.
+Gather the state of the cluster, figure out the difference between what is needed and what exists on the cluster,
+and do the neccessary creates, updates, and deletes. Often sequentially and frequently checking for errors.
+
+**Our CRDs give us a declarative way to specify what we want to deploy but we find ourselves writing controllers imperatively.**
+Our utility in this component is to show how to use the Pulumi Go SDK to write declarative code, eliminating the often common imperative parts
+of our controllers/operators.
+
 # Getting Started
 This library is designed to work with any Kubernetes controller that is based on
 the [kubernetes-sigs/controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) library.
