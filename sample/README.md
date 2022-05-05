@@ -11,7 +11,7 @@ kubectl apply -f config/crd/bases/
 ### Start the Manager
 _Be sure to set your kubectl context to the desired cluster before running the manager._
 
-Create a Run Configuration to run the manager in `sample/main.go`.
+Use the provided Run Configuration ("go run sample") to run the manager in `sample/main.go`.
 
 ### Apply a Sample Object
 See the sample object in `sample/config/samples/pulumi-controller.example.com_v1_iamaccount.yaml`.
