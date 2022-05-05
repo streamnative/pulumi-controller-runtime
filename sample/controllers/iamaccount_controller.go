@@ -25,7 +25,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	pulumiconfig "github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
-	pulumireconcile "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/reconcile"
+	pulumireconcile "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/reconcile"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -34,13 +34,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
-	otelcontroller "github.com/streamnative/pulumi-controller/sample/pkg/controller-runtime/controller"
+	otelcontroller "github.com/streamnative/pulumi-controller-runtime/sample/pkg/controller-runtime/controller"
 
 	pulumigoogleiamv1 "github.com/pulumi/pulumi-google-native/sdk/go/google/iam/v1"
 	pulumicorev1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/core/v1"
 	pulumimetav1 "github.com/pulumi/pulumi-kubernetes/sdk/v3/go/kubernetes/meta/v1"
 
-	samplev1 "github.com/streamnative/pulumi-controller/sample/api/v1"
+	samplev1 "github.com/streamnative/pulumi-controller-runtime/sample/api/v1"
 )
 
 const (

@@ -41,8 +41,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	texporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-	pulumicontrollerexamplecomv1 "github.com/streamnative/pulumi-controller/sample/api/v1"
-	"github.com/streamnative/pulumi-controller/sample/controllers"
+	pulumicontrollerexamplecomv1 "github.com/streamnative/pulumi-controller-runtime/sample/api/v1"
+	"github.com/streamnative/pulumi-controller-runtime/sample/controllers"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -82,7 +82,7 @@ func main() {
 	//cfg.Wrap(NewTransport())
 
 	// Install an OpenTracing "bridge" tracer (because Pulumi uses it)
-	tracer := otel.Tracer("github.com/streamnative/pulumi-controller/sample")
+	tracer := otel.Tracer("github.com/streamnative/pulumi-controller-runtime/sample")
 	bridgeTracer, _ := otbridge.NewTracerPair(tracer)
 	bridgeTracer.SetWarningHandler(func(msg string) {
 		setupLog.Info("warning from OpenTracing bridge: " + msg)

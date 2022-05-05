@@ -7,7 +7,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
-	snbackend "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/backend"
+	snbackend "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/backend"
 )
 
 const (
@@ -55,6 +55,3 @@ func (b *StackChanges) EngineEvent(ctx context.Context, event engine.Event) {
 		b.HasResourceChanges = p.ResourceChanges.HasChanges()
 	}
 }
-
-
-

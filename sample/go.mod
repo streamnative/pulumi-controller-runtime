@@ -1,4 +1,4 @@
-module github.com/streamnative/pulumi-controller/sample
+module github.com/streamnative/pulumi-controller-runtime/sample
 
 go 1.16
 

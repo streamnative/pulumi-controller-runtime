@@ -13,7 +13,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-	snbackend "github.com/streamnative/pulumi-controller/sample/pkg/reconciler-runtime/backend"
+	snbackend "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/backend"
 	otbridge "go.opentelemetry.io/otel/bridge/opentracing"
 	apitrace "go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/util/json"
