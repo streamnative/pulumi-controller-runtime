@@ -25,7 +25,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	pulumiconfig "github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
-	pulumireconcile "github.com/streamnative/pulumi-controller-runtime/sample/pkg/reconciler-runtime/reconcile"
+	pulumireconcile "github.com/streamnative/pulumi-controller-runtime/pkg/reconcile"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
